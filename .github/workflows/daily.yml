@@ -22,11 +22,13 @@ jobs:
           python-version: '3.11'
       - name: Install dependencies
         run: pip install -r requirements.txt
+      - name: Test parsers and database
+        run: python -m unittest discover -s tests -v
       - name: Check Kinopoisk premieres
         id: monitor
         continue-on-error: true
         run: python monitor.py
-      - name: Save updated database AND diagnostics
+      - name: Save database and diagnostics
         if: always()
         run: |
           git config user.name 'cinema-monitor-bot'
@@ -36,8 +38,8 @@ jobs:
             git commit -m 'Daily premiere monitoring'
             git push
           fi
-      - name: Mark unsuccessful source check
+      - name: Report source failure
         if: steps.monitor.outcome == 'failure'
         run: |
-          echo 'Kinopoisk returned no usable data; diagnostics were saved.'
+          echo 'Kinopoisk did not return usable premieres. Diagnostics have been saved.'
           exit 1
