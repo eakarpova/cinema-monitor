@@ -16,6 +16,9 @@ def upsert(c, film, source):
   for k,v in film.items():
    if v is None or v=='':continue
    previous=data.get(k)
+   # Не заменяем полное название случайным текстом ссылки из календаря.
+   if k == 'Название' and str(source).startswith('https://www.kinopoisk.ru/premiere/') and previous:
+    continue
    if previous != v:
     c.execute('INSERT INTO changes(movie_id,detected_at,field,old_value,new_value,source) VALUES(?,?,?,?,?,?)',(fid,now,k,str(previous or ''),str(v),source));data[k]=v;changed=True
   if changed:c.execute('UPDATE movies SET title=?,premiere=?,source=?,payload=?,updated_at=? WHERE id=?',(data.get('Название',''),data.get('Дата премьеры',''),source,json.dumps(data,ensure_ascii=False),now,fid))
