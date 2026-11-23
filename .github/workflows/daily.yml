@@ -27,6 +27,9 @@ jobs:
       - name: Check Kinopoisk premieres
         id: monitor
         continue-on-error: true
+        env:
+          MAX_CARD_CHECKS: '50'
+          REQUEST_DELAY: '0.6'
         run: python monitor.py
       - name: Save database and diagnostics
         if: always()

@@ -3,7 +3,7 @@ import sqlite3
 import unittest
 
 from db import upsert
-from monitor import parse_premiere_page, extract_ssr_json, extract_film_extra
+from monitor import parse_premiere_page, extract_ssr_json, extract_film_extra, resolved_names, page_metadata, safe_image_url, find_poster
 
 
 class CinemaMonitorTests(unittest.TestCase):
@@ -43,6 +43,45 @@ class CinemaMonitorTests(unittest.TestCase):
         extra = extract_film_extra(extract_ssr_json(html), "8123456")
         self.assertEqual(extra["Дата премьеры"], "2028-11-01")
         self.assertEqual(extra["Прокатчик в России"], "Прокатчик")
+
+
+    def test_nested_apollo_genres_and_poster(self):
+        state = {
+            "Genre:1": {"name": "Комедия"},
+            "Genre:2": {"displayName": "Фантастика"},
+            "Poster:1": {"url": "https://avatars.mds.yandex.net/get-kinopoisk-image/test/orig"},
+        }
+        result = resolved_names(
+            {"items": [{"genre": {"__ref": "Genre:1"}},
+                       {"__ref": "Genre:2"}, {"name": "драма"}]}, state)
+        self.assertEqual(result, ["Комедия", "Фантастика", "драма"])
+        self.assertEqual(
+            find_poster({"__ref": "Poster:1"}, state),
+            "https://avatars.mds.yandex.net/get-kinopoisk-image/test/orig")
+
+    def test_html_metadata_genre_and_poster(self):
+        html = """<html><head>
+        <meta property="og:image" content="https://avatars.mds.yandex.net/get-kinopoisk-image/test/300">
+        <script type="application/ld+json">
+        {"@type":"Movie","genre":["семейный","приключения"]}
+        </script></head></html>"""
+        fields = page_metadata(html)
+        self.assertEqual(fields["Жанры"], "семейный, приключения")
+        self.assertTrue(fields["Постер URL"].startswith("https://"))
+        self.assertEqual(safe_image_url("https://example.com/cover.jpg"), "")
+
+    def test_extract_genres_from_normalized_apollo(self):
+        data = {"apolloState": {
+            "Film:8123456": {
+                "genres": {"items": [{"__ref": "Genre:1"}]},
+                "poster": {"__ref": "Poster:1"},
+            },
+            "Genre:1": {"name": "мультфильм"},
+            "Poster:1": {"urlPreview": "https://avatars.mds.yandex.net/get-kinopoisk-image/preview"}
+        }}
+        result = extract_film_extra(data, "8123456")
+        self.assertEqual(result["Жанры"], "мультфильм")
+        self.assertTrue(result["Постер URL"].startswith("https://"))
 
     def test_calendar_cannot_downgrade_card_date(self):
         conn = self.database()
