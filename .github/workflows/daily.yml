@@ -1,6 +1,11 @@
 name: Daily premiere check
 
 on:
+  push:
+    branches: [main]
+    paths:
+      - 'monitor.py'
+      - '.github/workflows/daily.yml'
   schedule:
     - cron: '20 5 * * *'
   workflow_dispatch:
