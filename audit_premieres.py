@@ -33,5 +33,27 @@ for url in [ROOT + "/premiere/ru/", ROOT + "/premiere/ru/2026/month/11/"]:
         for f in films:
             if f["id"] in IDS or "Голодные игры" in f.get("Название",""):
                 print(f["id"], f.get("Название"), f.get("Дата премьеры"), flush=True)
+        if "month/11/" in url:
+            from bs4 import BeautifulSoup
+            soup = BeautifulSoup(html, "html.parser")
+            links = [str(a.get("href")) for a in soup.select('a[href]') if a.get("href")]
+            pages = [u for u in links if "page=" in u.lower() or "page/" in u.lower() or "ajax" in u.lower()]
+            print("pagination_links=", list(dict.fromkeys(pages))[:20], flush=True)
+            print("nav_text=", [t.get_text(" ",strip=True)[:150] for t in
+                  soup.select(".pagination,.pager,.pages,.paginator")][:7],flush=True)
+    except Exception as e:
+        print("ERROR",type(e).__name__,str(e),flush=True)
+
+for url in [ROOT + "/premiere/ru/date/2026-11-19/",
+            ROOT + "/premiere/ru/date/2026-11-26/",
+            ROOT + "/premiere/ru/2026/month/11/?page=2"]:
+    print("=== EXTRA", url, flush=True)
+    try:
+        html, final = get_page(s, url)
+        films = parse_premiere_page(html, url)
+        print("final=", final, "cards=",len(films),flush=True)
+        for f in films:
+            if f["id"] in IDS or "Голодные игры" in f.get("Название", ""):
+                print(f["id"], f.get("Название"), f.get("Дата премьеры"), flush=True)
     except Exception as e:
         print("ERROR",type(e).__name__,str(e),flush=True)
