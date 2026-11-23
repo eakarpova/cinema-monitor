@@ -212,6 +212,11 @@ def page_metadata(html):
             kinds = [kinds] if isinstance(kinds, str) else kinds
             if not any(k in ("Movie", "VideoObject") for k in kinds):
                 continue
+            origin = item.get("countryOfOrigin") or item.get("productionCountry")
+            if origin and not out.get("Страна"):
+                countries = resolved_names(origin, {})
+                if countries:
+                    out["Страна"] = ", ".join(dict.fromkeys(countries))
             genre = item.get("genre")
             if genre and not out.get("Жанры"):
                 values = genre if isinstance(genre, list) else [genre]
@@ -225,6 +230,12 @@ def page_metadata(html):
                     url = safe_image_url(img.get("url"))
                 if url:
                     out["Постер URL"] = url
+    if not out.get("Страна"):
+        tags = soup.select('meta[itemprop="countryOfOrigin"][content], '
+                           'meta[itemprop="productionCountry"][content]')
+        countries = [clean(t.get("content")) for t in tags if clean(t.get("content"))]
+        if countries:
+            out["Страна"] = ", ".join(dict.fromkeys(countries))
     if not out.get("Жанры"):
         tags = soup.select('meta[itemprop="genre"][content]')
         genres = [clean(t.get("content")) for t in tags if clean(t.get("content"))]
@@ -274,7 +285,11 @@ def extract_film_extra(ssr_data, film_id):
     title = film.get("title") or {}
     put("Название из карточки", clean(title.get("russian")))
     put("Год производства", film.get("productionYear") or film.get("year"))
-    put("Страна", names(film.get("countries")))
+    country_fields = (
+        film.get("countries") or film.get("productionCountries")
+        or film.get("countryOfOrigin") or film.get("country")
+    )
+    put("Страна", ", ".join(resolved_names(country_fields, state)))
     put("Жанры", ", ".join(resolved_names(film.get("genres"), state)))
     put("Постер URL", find_poster(film.get("poster") or film.get("posters") or film.get("images"), state))
     put("Описание", clean(film.get("synopsis")))
@@ -392,7 +407,8 @@ def run():
             date = dt.date.fromisoformat(day) if day else None
             if date and today <= date <= today + dt.timedelta(days=180):
                 soon.append((date, fid))
-            if not clean(payload.get("Жанры")) or not clean(payload.get("Постер URL")):
+            if (not clean(payload.get("Жанры")) or not clean(payload.get("Постер URL"))
+                    or not clean(payload.get("Страна"))):
                 missing.append((date or dt.date(2031, 1, 1), fid))
         soon.sort()
         missing.sort()
@@ -408,7 +424,7 @@ def run():
         include(new_ids, CARD_LIMIT // 3)
         include([fid for _, fid in missing], max(0, CARD_LIMIT - len(to_check) - 5))
         include(staggered([fid for fid, _ in all_rows], max(5, CARD_LIMIT)), CARD_LIMIT)
-        cards_ok = cards_error = cards_genres = cards_posters = 0
+        cards_ok = cards_error = cards_genres = cards_posters = cards_countries = 0
         for fid in to_check:
             url = f"{ROOT}/film/{fid}/"
             try:
@@ -429,6 +445,7 @@ def run():
                 cards_ok += 1
                 cards_genres += int(bool(fields.get("Жанры")))
                 cards_posters += int(bool(fields.get("Постер URL")))
+                cards_countries += int(bool(fields.get("Страна")))
             except Exception as exc:
                 cards_error += 1
                 print(f"card {fid}: ERROR {exc}", file=sys.stderr, flush=True)
@@ -437,7 +454,8 @@ def run():
         summary = (
             f"monthly pages OK={pages_ok}, EMPTY={pages_empty}, ERROR={pages_error}; "
             f"found={len(discovered)} unique, new={added}, card OK={cards_ok}, "
-            f"card errors={cards_error}, genres={cards_genres}, posters={cards_posters}, conflicts={conflicts}"
+            f"card errors={cards_error}, genres={cards_genres}, "
+            f"posters={cards_posters}, countries={cards_countries}, conflicts={conflicts}"
         )
         log(conn, "Kinopoisk monthly monitoring 2026–2030",
             "OK" if pages_ok else "ERROR", summary, len(discovered))

@@ -83,6 +83,38 @@ class CinemaMonitorTests(unittest.TestCase):
         self.assertEqual(result["Жанры"], "мультфильм")
         self.assertTrue(result["Постер URL"].startswith("https://"))
 
+
+    def test_countries_from_apollo_refs(self):
+        state = {"apolloState": {
+            "Film:8123456": {
+                "countries": {"items": [{"__ref": "Country:1"}, {"country": {"__ref": "Country:2"}}]}
+            },
+            "Country:1": {"name": "Россия"},
+            "Country:2": {"displayName": "Казахстан"},
+        }}
+        result = extract_film_extra(state, "8123456")
+        self.assertEqual(result["Страна"], "Россия, Казахстан")
+
+    def test_countries_jsonld_fallback(self):
+        html = """<script type="application/ld+json">
+            {"@type": "Movie",
+             "countryOfOrigin": [{"@type": "Country", "name": "Россия"},
+                                 {"name": "Франция"}]}
+            </script>"""
+        fields = page_metadata(html)
+        self.assertEqual(fields["Страна"], "Россия, Франция")
+
+    def test_country_can_be_added_to_previously_empty_movie(self):
+        conn = self.database()
+        upsert(conn, {"id": "8123456", "Название": "Фильм"},
+               "https://www.kinopoisk.ru/premiere/ru/2027/month/1/")
+        upsert(conn, {"id": "8123456", "Страна": "Россия"},
+               "https://www.kinopoisk.ru/film/8123456/")
+        movie = json.loads(conn.execute(
+            "SELECT payload FROM movies WHERE id='8123456'").fetchone()[0])
+        self.assertEqual(movie["Страна"], "Россия")
+        conn.close()
+
     def test_calendar_cannot_downgrade_card_date(self):
         conn = self.database()
         upsert(conn, {"id": "8123456", "Название": "Настоящее название",

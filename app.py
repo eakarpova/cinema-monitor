@@ -229,13 +229,28 @@ with tab_overview:
             st.plotly_chart(plot, use_container_width=True)
         else:
             st.info("Нет дат для построения графика")
-    st.subheader("По прокатчикам")
-    distributors = f["Прокатчик в России"].dropna().astype(str)
-    distributors = distributors[distributors.str.strip() != ""]
-    if not distributors.empty:
-        top = distributors.value_counts().head(15).rename_axis("Прокатчик").reset_index(name="Фильмов")
-        st.plotly_chart(px.bar(top, x="Фильмов", y="Прокатчик", orientation="h"),
-                        use_container_width=True)
+    st.subheader("Распределение премьер по жанрам")
+    st.caption("Один фильм может относиться к нескольким жанрам. "
+               "В таком случае он учитывается в каждом из них.")
+    raw_genres = (f["Жанры"].fillna("").astype(str)
+                  .str.split(r"[,;]").explode().str.strip())
+    genres_clean = raw_genres[raw_genres.ne("") &
+                              ~raw_genres.str.lower().isin(["none", "nan", "null"])]
+    if not genres_clean.empty:
+        genres_clean = genres_clean.str.casefold()
+        genre_counts = (genres_clean.value_counts().head(20)
+                        .rename_axis("Жанр").reset_index(name="Фильмов"))
+        genre_counts["Жанр"] = genre_counts["Жанр"].str.capitalize()
+        chart = px.bar(genre_counts, x="Фильмов", y="Жанр",
+                       orientation="h", text="Фильмов",
+                       category_orders={"Жанр": genre_counts["Жанр"].iloc[::-1].tolist()})
+        chart.update_layout(height=max(360, len(genre_counts) * 30),
+                            xaxis_title="Количество фильмов",
+                            yaxis_title="", yaxis_type="category")
+        st.plotly_chart(chart, use_container_width=True)
+    else:
+        st.info("Для текущей выборки жанры ещё не получены. "
+                "Они заполняются при ежедневной проверке карточек.")
 
 with tab_catalog:
     st.subheader("Каталог фильмов")
