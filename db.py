@@ -42,10 +42,14 @@ def valid_date(value):
 
 def source_rank(source):
     value = str(source).lower()
+    # Premiere calendar entries are the authoritative published schedule.
+    # Specific dated calendar pages take priority over month listings.
+    if "календарь кинопоиска" in value and "ежедневная проверка" in value:
+        return 4
+    if "календарь кинопоиска" in value:
+        return 3
     if "карточка кинопоиска" in value:
         return 2
-    if "календарь кинопоиска" in value:
-        return 1
     return 0
 
 

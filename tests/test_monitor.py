@@ -115,19 +115,57 @@ class CinemaMonitorTests(unittest.TestCase):
         self.assertEqual(movie["Страна"], "Россия")
         conn.close()
 
-    def test_calendar_cannot_downgrade_card_date(self):
+
+    def test_second_month_page_contains_current_releases(self):
+        html = """<div class="premier_item" id="5927239">
+        <meta itemprop="startDate" content="2026-11-26"/>
+        <span class="name"><a href="/film/5927239/">
+        Голодные игры: Рассвет Жатвы</a></span></div>"""
+        row = parse_premiere_page(
+            html, "https://www.kinopoisk.ru/premiere/ru/2026/month/11/?page=2")[0]
+        self.assertEqual(row["Дата премьеры"], "2026-11-26")
+        self.assertEqual(row["Год календаря"], "2026")
+
+    def test_current_daily_schedule_overrides_stale_card_date(self):
+        conn = self.database()
+        fid = "5927239"
+        upsert(conn, {"id": fid, "Название": "Голодные игры: Рассвет Жатвы",
+                      "Дата премьеры": "2026-11-19",
+                      "Источник даты": "Карточка Кинопоиска: кинотеатральный релиз РФ"},
+               "https://www.kinopoisk.ru/film/5927239/")
+        html = """<div class="premier_item" id="5927239">
+        <meta itemprop="startDate" content="2026-11-26"/>
+        <span class="name"><a href="/film/5927239/">
+        Голодные игры: Рассвет Жатвы</a></span></div>"""
+        url = "https://www.kinopoisk.ru/premiere/ru/date/2026-11-26/"
+        row = parse_premiere_page(html, url)[0]
+        self.assertEqual(row["Источник даты"],
+                         "Календарь Кинопоиска: ежедневная проверка")
+        upsert(conn, row, url)
+        upsert(conn, {"id": fid, "Дата премьеры": "2026-11-19",
+                      "Источник даты": "Карточка Кинопоиска: кинотеатральный релиз РФ"},
+               "https://www.kinopoisk.ru/film/5927239/")
+        data = json.loads(conn.execute(
+            "SELECT payload FROM movies WHERE id=?", (fid,)).fetchone()[0])
+        self.assertEqual(data["Дата премьеры"], "2026-11-26")
+        self.assertEqual(conn.execute(
+            "SELECT COUNT(*) FROM changes WHERE movie_id=? AND field='Дата премьеры'",
+            (fid,)).fetchone()[0], 1)
+        conn.close()
+
+    def test_calendar_schedule_overrides_stale_card(self):
         conn = self.database()
         upsert(conn, {"id": "8123456", "Название": "Настоящее название",
-                      "Дата премьеры": "2028-10-12",
-                      "Источник даты": "Календарь Кинопоиска: startDate"}, "https://www.kinopoisk.ru/premiere/ru/2028/month/10/")
-        upsert(conn, {"id": "8123456", "Дата премьеры": "2028-11-01",
+                      "Дата премьеры": "2028-11-01",
                       "Источник даты": "Карточка Кинопоиска: кинотеатральный релиз РФ"}, "https://www.kinopoisk.ru/film/8123456/")
+        upsert(conn, {"id": "8123456", "Дата премьеры": "2028-10-12",
+                      "Источник даты": "Календарь Кинопоиска: startDate"}, "https://www.kinopoisk.ru/premiere/ru/2028/month/10/")
         upsert(conn, {"id": "8123456", "Название": "Подробнее",
                       "Дата премьеры": "2028-10-12",
                       "Источник даты": "Календарь Кинопоиска: startDate"}, "https://www.kinopoisk.ru/premiere/ru/2028/month/10/")
         result = json.loads(conn.execute("SELECT payload FROM movies WHERE id='8123456'").fetchone()[0])
         self.assertEqual(result["Название"], "Настоящее название")
-        self.assertEqual(result["Дата премьеры"], "2028-11-01")
+        self.assertEqual(result["Дата премьеры"], "2028-10-12")
         self.assertEqual(conn.execute("SELECT COUNT(*) FROM changes WHERE field='Новый фильм'").fetchone()[0], 1)
         conn.close()
 

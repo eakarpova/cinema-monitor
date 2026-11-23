@@ -11,6 +11,7 @@ import random
 import re
 import sys
 import time
+from zoneinfo import ZoneInfo
 from urllib.parse import urljoin, urlparse
 
 import requests
@@ -20,6 +21,9 @@ from db import connect, log, upsert, valid_date
 ROOT = "https://www.kinopoisk.ru"
 YEARS = range(2026, 2031)
 CARD_LIMIT = min(max(int(os.getenv("MAX_CARD_CHECKS", "50")), 0), 100)
+MAX_MONTH_PAGES = min(max(int(os.getenv("MAX_MONTH_PAGES", "8")), 1), 12)
+DAILY_LOOKAHEAD = min(max(int(os.getenv("DAILY_LOOKAHEAD", "35")), 0), 60)
+PAGE_SIZE = 25
 DELAY = max(float(os.getenv("REQUEST_DELAY", "0.6")), 0.0)
 HEADERS = {
     "User-Agent": ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -83,7 +87,10 @@ def parse_premiere_page(html, url):
         date_value = valid_date(date_raw[:10]) if date_raw else None
         if date_value:
             record["Дата премьеры"] = date_value
-            record["Источник даты"] = "Календарь Кинопоиска: startDate"
+            if "/date/" in url:
+                record["Источник даты"] = "Календарь Кинопоиска: ежедневная проверка"
+            else:
+                record["Источник даты"] = "Календарь Кинопоиска: startDate"
         found.append(record)
     return found
 
@@ -352,42 +359,113 @@ def run():
     disputed = set()
     pages_ok = pages_empty = pages_error = 0
     conflicts = 0
+    daily_ok = daily_empty = daily_error = 0
+    month_pages_checked = 0
     try:
+        def merge_candidate(movie, url):
+            nonlocal conflicts
+            fid = movie["id"]
+            if fid not in discovered:
+                discovered[fid] = (movie, url)
+                return
+            previous, previous_url = discovered[fid]
+            a = previous.get("Дата премьеры")
+            b = movie.get("Дата премьеры")
+            is_day = "/date/" in url
+            was_day = "/date/" in previous_url
+            if a and b and a != b:
+                if is_day and not was_day:
+                    # An explicit current day listing takes precedence over a
+                    # potentially cached/older month listing.
+                    discovered[fid] = (movie, url)
+                    disputed.discard(fid)
+                    log(conn, url, "RECONCILED",
+                        f"Дата {fid} уточнена дневным календарём: {a} → {b}")
+                elif was_day:
+                    pass
+                else:
+                    conflicts += 1
+                    disputed.add(fid)
+                    previous.pop("Дата премьеры", None)
+                    previous.pop("Источник даты", None)
+                    log(conn, url, "CONFLICT",
+                        f"Противоречивые месячные даты {fid}: {a} / {b}")
+            elif b and not a and (fid not in disputed or is_day):
+                previous["Дата премьеры"] = b
+                previous["Источник даты"] = movie.get("Источник даты",
+                                                       "Календарь Кинопоиска: startDate")
+                if is_day:
+                    discovered[fid] = (previous, url)
+                    disputed.discard(fid)
+            elif b and a == b and is_day and not was_day:
+                previous["Источник даты"] = movie.get("Источник даты",
+                                                       "Календарь Кинопоиска: ежедневная проверка")
+                discovered[fid] = (previous, url)
+
         for year in YEARS:
             for month in range(1, 13):
-                url = f"{ROOT}/premiere/ru/{year}/month/{month}/"
-                try:
-                    html, final_url = get_page(session, url)
-                    films = parse_premiere_page(html, url)
-                    if films:
+                seen_pages = set()
+                for page in range(1, MAX_MONTH_PAGES + 1):
+                    url = (f"{ROOT}/premiere/ru/{year}/month/{month}/"
+                           + (f"?page={page}" if page > 1 else ""))
+                    try:
+                        html, final_url = get_page(session, url)
+                        films = parse_premiere_page(html, url)
+                        month_pages_checked += 1
+                        if not films:
+                            pages_empty += 1
+                            log(conn, url, "EMPTY",
+                                f"Нет записей на странице {page}; URL={final_url}")
+                            break
+                        page_signature = tuple(sorted(f["id"] for f in films))
+                        if page_signature in seen_pages:
+                            log(conn, url, "REPEATED",
+                                "Кинопоиск повторил предыдущую страницу; обход остановлен")
+                            break
+                        seen_pages.add(page_signature)
                         pages_ok += 1
-                        log(conn, url, "OK", f"Найдено карточек; URL={final_url}", len(films))
-                    else:
-                        pages_empty += 1
-                        log(conn, url, "EMPTY", f"Нет div.premier_item; URL={final_url}")
-                    for movie in films:
-                        fid = movie["id"]
-                        if fid not in discovered:
-                            discovered[fid] = (movie, url)
-                        else:
-                            previous = discovered[fid][0]
-                            a = previous.get("Дата премьеры")
-                            b = movie.get("Дата премьеры")
-                            if a and b and a != b:
-                                conflicts += 1
-                                disputed.add(fid)
-                                previous.pop("Дата премьеры", None)
-                                previous.pop("Источник даты", None)
-                                log(conn, url, "CONFLICT", f"Противоречивые даты {fid}: {a} / {b}")
-                            elif fid not in disputed and b and not a:
-                                previous["Дата премьеры"] = b
-                                previous["Источник даты"] = movie["Источник даты"]
-                    print(f"calendar {year}-{month:02d}: {len(films)}", flush=True)
-                except Exception as exc:
-                    pages_error += 1
-                    log(conn, url, "ERROR", f"{type(exc).__name__}: {exc}")
-                    print(f"calendar {year}-{month:02d}: ERROR {exc}", file=sys.stderr, flush=True)
+                        log(conn, url, "OK", f"Страница {page}; URL={final_url}", len(films))
+                        for movie in films:
+                            merge_candidate(movie, url)
+                        print(f"calendar {year}-{month:02d} page={page}: {len(films)}",
+                              flush=True)
+                        if len(films) < PAGE_SIZE:
+                            break
+                    except Exception as exc:
+                        pages_error += 1
+                        log(conn, url, "ERROR", f"{type(exc).__name__}: {exc}")
+                        print(f"calendar {year}-{month:02d} page={page}: ERROR {exc}",
+                              file=sys.stderr, flush=True)
+                        break
+                    time.sleep(DELAY + random.uniform(0, 0.2))
                 time.sleep(DELAY + random.uniform(0, 0.2))
+
+        # Unlike the month listing, /date/YYYY-MM-DD/ exposes a specific day
+        # and catches the remaining releases in the rolling upcoming window.
+        today = dt.datetime.now(ZoneInfo("Europe/Moscow")).date()
+        for offset in range(DAILY_LOOKAHEAD + 1):
+            day = today + dt.timedelta(days=offset)
+            if not 2026 <= day.year <= 2030:
+                continue
+            url = f"{ROOT}/premiere/ru/date/{day.isoformat()}/"
+            try:
+                html, final_url = get_page(session, url)
+                films = parse_premiere_page(html, url)
+                if not films:
+                    daily_empty += 1
+                    log(conn, url, "EMPTY", f"На дату нет записей; URL={final_url}")
+                else:
+                    daily_ok += 1
+                    log(conn, url, "OK", f"Дневной календарь; URL={final_url}",
+                        len(films))
+                    for movie in films:
+                        merge_candidate(movie, url)
+                    print(f"daily {day}: {len(films)}", flush=True)
+            except Exception as exc:
+                daily_error += 1
+                log(conn, url, "ERROR", f"{type(exc).__name__}: {exc}")
+                print(f"daily {day}: ERROR {exc}", file=sys.stderr, flush=True)
+            time.sleep(DELAY + random.uniform(0, 0.2))
 
         new_ids = [fid for fid in discovered if not conn.execute(
             "SELECT 1 FROM movies WHERE id=?", (fid,)).fetchone()]
@@ -453,7 +531,8 @@ def run():
             time.sleep(DELAY + random.uniform(0, 0.2))
 
         summary = (
-            f"monthly pages OK={pages_ok}, EMPTY={pages_empty}, ERROR={pages_error}; "
+            f"monthly pages OK={pages_ok}, EMPTY={pages_empty}, ERROR={pages_error}, checked={month_pages_checked}; "
+            f"daily OK={daily_ok}, EMPTY={daily_empty}, ERROR={daily_error}; "
             f"found={len(discovered)} unique, new={added}, card OK={cards_ok}, "
             f"card errors={cards_error}, genres={cards_genres}, "
             f"posters={cards_posters}, countries={cards_countries}, conflicts={conflicts}"
