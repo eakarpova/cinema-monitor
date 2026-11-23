@@ -1,5 +1,8 @@
 """Cinema Monitor — interactive Streamlit dashboard, backed by cinema.sqlite."""
 import json
+from io import BytesIO
+from openpyxl.styles import Font, PatternFill, Alignment
+from openpyxl.utils import get_column_letter
 import re
 import datetime as dt
 from zoneinfo import ZoneInfo
@@ -252,6 +255,77 @@ with tab_overview:
         st.info("Для текущей выборки жанры ещё не получены. "
                 "Они заполняются при ежедневной проверке карточек.")
 
+
+def export_excel(data):
+    """Formatted XLSX; respects the active catalogue filters and shown columns."""
+    output = BytesIO()
+    sheet_data = data.copy().reset_index(drop=True)
+
+    # True Excel values rather than text, for date / numeric filters and sorting.
+    if "Дата премьеры" in sheet_data.columns:
+        sheet_data["Дата премьеры"] = pd.to_datetime(
+            sheet_data["Дата премьеры"], errors="coerce").dt.date
+    for key in ("Рейтинг Кинопоиска", "Количество оценок КП"):
+        if key in sheet_data.columns:
+            sheet_data[key] = pd.to_numeric(sheet_data[key], errors="coerce")
+    if "ID фильма" in sheet_data.columns:
+        sheet_data["ID фильма"] = sheet_data["ID фильма"].apply(
+            lambda v: str(v) if pd.notna(v) else "")
+
+    # Treat externally scraped text as literal data, not Excel formulas.
+    for key in sheet_data.select_dtypes(include=["object", "str"]).columns:
+        sheet_data[key] = sheet_data[key].map(
+            lambda v: ("'" + v) if isinstance(v, str) and
+            v.lstrip().startswith(("=", "+", "-", "@")) else v)
+
+    with pd.ExcelWriter(output, engine="openpyxl",
+                        date_format="DD.MM.YYYY", datetime_format="DD.MM.YYYY") as writer:
+        sheet_data.to_excel(writer, sheet_name="Кинопремьеры", index=False)
+        ws = writer.sheets["Кинопремьеры"]
+        ws.freeze_panes = "A2"
+        ws.auto_filter.ref = ws.dimensions
+        ws.sheet_view.showGridLines = False
+        header_fill = PatternFill("solid", fgColor="20324C")
+        stripe_fill = PatternFill("solid", fgColor="F1F5FA")
+        ws.row_dimensions[1].height = 29
+
+        for cell in ws[1]:
+            cell.fill = header_fill
+            cell.font = Font(name="Calibri", size=11, bold=True, color="FFFFFF")
+            cell.alignment = Alignment(vertical="center", wrap_text=True)
+
+        for row in ws.iter_rows(min_row=2):
+            ws.row_dimensions[row[0].row].height = 20
+            for cell in row:
+                if cell.row % 2 == 0:
+                    cell.fill = stripe_fill
+                cell.alignment = Alignment(vertical="center")
+                if sheet_data.columns[cell.column - 1] == "Дата премьеры":
+                    cell.number_format = "DD.MM.YYYY"
+                if sheet_data.columns[cell.column - 1] == "ID фильма":
+                    cell.number_format = "@"
+                if (sheet_data.columns[cell.column - 1] == "Ссылка" and
+                    isinstance(cell.value, str) and
+                    cell.value.startswith("https://www.kinopoisk.ru/film/")):
+                    cell.hyperlink = cell.value
+                    cell.style = "Hyperlink"
+
+        column_widths = {
+            "Дата премьеры": 17, "Название": 43, "Год производства": 20,
+            "Страна": 23, "Жанры": 34, "Прокатчик в России": 32,
+            "Рейтинг Кинопоиска": 23, "Количество оценок КП": 25,
+            "ID фильма": 17, "Режиссер": 32, "Актеры": 42,
+            "Источник даты": 45, "Ссылка": 47, "Постер URL": 48,
+        }
+        for index, name in enumerate(sheet_data.columns, 1):
+            ws.column_dimensions[get_column_letter(index)].width = column_widths.get(name, 24)
+        ws.sheet_properties.pageSetUpPr.fitToPage = True
+        ws.page_setup.fitToWidth = 1
+        ws.print_options.horizontalCentered = True
+        ws.print_title_rows = "1:1"
+    return output.getvalue()
+
+
 with tab_catalog:
     st.subheader("Каталог фильмов")
     columns = ["Дата премьеры", "Название", "Год производства", "Страна", "Жанры",
@@ -272,9 +346,27 @@ with tab_catalog:
     st.dataframe(selected, use_container_width=True, hide_index=True,
                  column_config={"Ссылка": st.column_config.LinkColumn("Карточка"),
                                 "Постер URL": st.column_config.ImageColumn("Постер")})
-    st.download_button("Скачать базу по текущим фильтрам (CSV)",
-                       selected.to_csv(index=False).encode("utf-8-sig"),
-                       "cinema_filtered.csv", "text/csv")
+    st.caption(f"Экспортируется текущая выборка: {len(selected)} фильмов, "
+               f"{len(selected.columns)} выбранных столбцов.")
+    xlsx_col, csv_col = st.columns(2)
+    with xlsx_col:
+        st.download_button(
+            "📗 Скачать Excel (.xlsx)",
+            data=export_excel(selected),
+            file_name="cinema_premieres_filtered.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            use_container_width=True,
+            key="download_xlsx",
+        )
+    with csv_col:
+        st.download_button(
+            "Скачать CSV",
+            data=selected.to_csv(index=False).encode("utf-8-sig"),
+            file_name="cinema_filtered.csv",
+            mime="text/csv",
+            use_container_width=True,
+            key="download_csv",
+        )
 
 with tab_events:
     st.subheader("Новые премьеры и изменения")
