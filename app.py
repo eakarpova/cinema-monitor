@@ -273,7 +273,7 @@ def export_excel(data):
             lambda v: str(v) if pd.notna(v) else "")
 
     # Treat externally scraped text as literal data, not Excel formulas.
-    for key in sheet_data.select_dtypes(include=["object", "str"]).columns:
+    for key in sheet_data.select_dtypes(include=["object"]).columns:
         sheet_data[key] = sheet_data[key].map(
             lambda v: ("'" + v) if isinstance(v, str) and
             v.lstrip().startswith(("=", "+", "-", "@")) else v)
