@@ -141,7 +141,8 @@ def resolved_names(values, state, depth=0):
             found.append(clean(value))
         elif isinstance(value, (dict, list)):
             found.extend(resolved_names(value, state, depth + 1))
-    for key in ("items", "edges", "node", "genre", "genres", "countries"):
+    for key in ("items", "edges", "node", "genre", "genres", "countries",
+                "country", "countryOfOrigin", "productionCountries"):
         if key in values:
             found.extend(resolved_names(values[key], state, depth + 1))
     return list(dict.fromkeys(found))
