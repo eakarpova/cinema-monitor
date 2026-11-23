@@ -5,6 +5,7 @@ on:
     branches: [main]
     paths:
       - '.github/workflows/audit.yml'
+      - 'audit_premieres.py'
 permissions:
   contents: read
 jobs:
