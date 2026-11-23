@@ -1,4 +1,3 @@
-
 name: Daily premiere check
 
 on:
@@ -9,25 +8,36 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  group: cinema-monitor-daily
+  cancel-in-progress: false
+
 jobs:
   update:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-
       - name: Install dependencies
         run: pip install -r requirements.txt
-
-      - name: Check premieres
+      - name: Check Kinopoisk premieres
+        id: monitor
+        continue-on-error: true
         run: python monitor.py
-
-      - name: Commit updated database
+      - name: Save updated database AND diagnostics
+        if: always()
         run: |
-          git config user.name "cinema-monitor-bot"
-          git config user.email "cinema-monitor-bot@users.noreply.github.com"
+          git config user.name 'cinema-monitor-bot'
+          git config user.email 'cinema-monitor-bot@users.noreply.github.com'
           git add data/cinema.sqlite
-          git diff --cached --quiet || (git commit -m "Daily premiere monitoring" && git push)
+          if ! git diff --cached --quiet; then
+            git commit -m 'Daily premiere monitoring'
+            git push
+          fi
+      - name: Mark unsuccessful source check
+        if: steps.monitor.outcome == 'failure'
+        run: |
+          echo 'Kinopoisk returned no usable data; diagnostics were saved.'
+          exit 1
