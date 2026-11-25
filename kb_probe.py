@@ -79,3 +79,20 @@ for text in base.find_all("script"):
     script=text.string or ""
     if "year" in script and "month" in script and ("release" in script or "sortable" in script):
         print("SCRIPT",script[:1900].replace("\n"," "),flush=True)
+
+r=S.get("https://www.kinobusiness.com/release/",timeout=20)
+soup=BeautifulSoup(r.text,"html.parser")
+alljs=[urljoin(r.url,tag["src"]) for tag in soup.select("script[src]")]
+print("JSFILES",len(alljs),[(x.split("/")[-1],x[:140]) for x in alljs[-25:]],flush=True)
+for url in alljs[-12:]:
+    try:
+        js=S.get(url,timeout=12).text
+        findings=[]
+        for q in ["sortable__select","distrebutor","/release/","year","month","ajax"]:
+            at=js.find(q)
+            if at>=0:
+                findings.append((q,js[max(0,at-170):at+300].replace("\n"," ")[:450]))
+        if findings:
+            print("JSFIND",url,len(js),findings[:6],flush=True)
+    except Exception as e:
+        print("JSERR",str(e)[:90],flush=True)
