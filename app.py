@@ -45,6 +45,23 @@ for col in fields:
     if col not in df.columns:
         df[col] = None
 
+def union_genres(movie):
+    pieces = []
+    seen = set()
+    for column in ("Жанры", "Жанры Кинобизнес"):
+        raw = movie.get(column)
+        if not raw or str(raw).lower() in ("nan", "none"):
+            continue
+        for value in re.split(r"[,;/]", str(raw)):
+            value = value.strip()
+            if value and value.casefold() not in seen:
+                pieces.append(value)
+                seen.add(value.casefold())
+    return ", ".join(pieces) if pieces else None
+
+
+df["Жанры"] = df.apply(union_genres, axis=1)
+
 df["Дата"] = pd.to_datetime(df["Дата премьеры"], errors="coerce")
 df["Год премьеры"] = df["Дата"].dt.year
 # Show undated films in the year where they appeared in the Kinopoisk calendar.
@@ -64,7 +81,7 @@ show_unknown = st.sidebar.checkbox("Показывать анонсы без т�
 def options_from_column(column):
     values = set()
     for raw in df[column].dropna().astype(str):
-        values.update(x.strip() for x in re.split(r"[,;]", raw) if x.strip())
+        values.update(x.strip() for x in re.split(r"[,;/]", raw) if x.strip())
     return sorted(values, key=str.casefold)
 
 
@@ -137,6 +154,19 @@ else:
     st.warning("Автоматический мониторинг ещё не проходил успешную проверку. "
                "Зайдите в GitHub → Actions → Daily premiere check.")
 
+kb_runs = (runs[runs["source"].fillna("").str.contains(
+    "Kinobusiness release monitoring", case=False)]
+    if not runs.empty else pd.DataFrame())
+if not kb_runs.empty:
+    kb_latest = kb_runs.iloc[0]
+    kb_stamp = pd.to_datetime(kb_latest["checked_at"], utc=True, errors="coerce")
+    kb_time = kb_stamp.strftime("%d.%m.%Y %H:%M UTC") if pd.notna(kb_stamp) else "неизвестно"
+    if kb_latest["status"] == "OK":
+        st.caption(f"✅ Кинобизнес · {kb_time} · {kb_latest['details']}")
+    else:
+        st.warning(f"Кинобизнес: последняя проверка не удалась ({kb_time}). "
+                   "Существующие сведения сохранены.")
+
 metric_a, metric_b, metric_c, metric_d = st.columns(4)
 metric_a.metric("Фильмов в выборке", len(f))
 metric_b.metric("Новых за 7 дней в выборке", new7)
@@ -207,9 +237,14 @@ def card(movie, *, tag="", note=""):
         if note:
             st.info(note)
         short = available_text(movie.get("Краткое описание")) or available_text(movie.get("Описание"))
-        if short:
+        other_synopsis = available_text(movie.get("Описание Кинобизнес"))
+        if short or other_synopsis:
             with st.expander("О фильме"):
-                st.write(short[:1200])
+                if short:
+                    st.write(short[:1200])
+                if other_synopsis and other_synopsis != short:
+                    st.caption("Дополнительное описание — Кинобизнес")
+                    st.write(other_synopsis[:1600])
                 cast = available_text(movie.get("Актеры"))
                 director = available_text(movie.get("Режиссер"))
                 if cast:

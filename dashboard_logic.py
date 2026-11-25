@@ -18,7 +18,7 @@ _YOUTH_FRANCHISES = ("ум и хрум", "сила пяти вкусов")
 
 
 def selected_any(value, selected):
-    pieces = {x.strip().casefold() for x in re.split(r"[,;]", str(value or ""))}
+    pieces = {x.strip().casefold() for x in re.split(r"[,;/]", str(value or ""))}
     return bool(pieces.intersection(x.strip().casefold() for x in selected))
 
 
@@ -69,8 +69,11 @@ def target_month(today, months_ahead):
 
 def likely_youth_theme(record):
     """Heuristic thematic hint, never a claim about an official target age."""
-    if str(record.get("Возрастное ограничение") or "").strip() == "18+":
+    age = str(record.get("Возрастное ограничение") or "").strip()
+    if age == "18+":
         return False
+    if age in ("0+", "6+", "12+"):
+        return True
     genres = str(record.get("Жанры") or "").casefold()
     title = str(record.get("Название") or "").casefold()
     description = str(record.get("Краткое описание") or record.get("Описание") or "").casefold()

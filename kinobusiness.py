@@ -447,6 +447,11 @@ def collect():
         # descriptions and next 18 months of releases.
         today = dt.date.today()
         items = list(by_url.values())
+        previous_details = {}
+        for movie_row in conn.execute("SELECT payload FROM movies"):
+            payload = json.loads(movie_row["payload"])
+            if payload.get("Ссылка Кинобизнес"):
+                previous_details[payload["Ссылка Кинобизнес"]] = payload
         def importance(film):
             title = norm_title(film.get("Название"))
             when = film.get("Дата премьеры Кинобизнес")
@@ -456,7 +461,11 @@ def collect():
                 d = dt.date(2031, 1, 1)
             near = today <= d <= today + dt.timedelta(days=540)
             is_family = any(word in title for word in ("умхрум", "мульт", "сказк", "детск"))
-            return (not is_family, not near, d)
+            # Rotate coverage: completed descriptions move behind films that
+            # have not yet been checked, rather than scraping the same 25 daily.
+            stored = previous_details.get(film["Ссылка Кинобизнес"], {})
+            needs_description = not stored.get("Описание Кинобизнес")
+            return (not is_family, not needs_description, not near, d)
         items.sort(key=importance)
         for film in items[:DETAIL_LIMIT]:
             try:
