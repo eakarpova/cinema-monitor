@@ -487,6 +487,22 @@ with tab_catalog:
     if visible_columns:
         selected = f.sort_values(["Дата", "Название"], na_position="last")[
             visible_columns].copy()
+        # Normalize mixed values from source JSON, so Streamlit and Excel use
+        # stable column types and the table redraws correctly after filtering.
+        for numeric_col in ("Рейтинг Кинопоиска", "Количество оценок КП",
+                            "Ждут премьеру"):
+            if numeric_col in selected.columns:
+                selected[numeric_col] = pd.to_numeric(
+                    selected[numeric_col], errors="coerce")
+        if "Дата премьеры" in selected.columns:
+            selected["Дата премьеры"] = pd.to_datetime(
+                selected["Дата премьеры"], errors="coerce")
+        for text_col in selected.columns.difference(
+                ["Рейтинг Кинопоиска", "Количество оценок КП",
+                 "Ждут премьеру", "Дата премьеры"]):
+            selected[text_col] = selected[text_col].map(
+                lambda v: None if v is None or
+                (isinstance(v, float) and pd.isna(v)) else str(v))
         # Recreate the grid on each changed selection to prevent stale client-side
         # column sorting/selection from confusing filtered catalogue results.
         fingerprint = hashlib.sha1(
