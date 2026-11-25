@@ -16,7 +16,7 @@ from urllib.parse import urljoin, urlparse
 import requests
 from bs4 import BeautifulSoup
 
-from db import connect, log, upsert, valid_date
+from db import connect, log, upsert, valid_date, clear_kb_primary_dates
 
 ROOT = "https://www.kinobusiness.com"
 HEADERS = {
@@ -301,9 +301,14 @@ def combine_patch(film, saved, target_id):
     for src, dest in main_fields.items():
         if film.get(src) and not saved.get(dest):
             patch[dest] = film[src]
-    if film.get("Дата премьеры Кинобизнес") and not saved.get("Дата премьеры"):
+    # For titles with a real Kinopoisk ID, the primary date is exclusively
+    # Kinopoisk's verified calendar date. The secondary date remains visible
+    # as "Дата премьеры Кинобизнес" but is never used as the main premiere.
+    # Source-only kb_ films retain a clearly labelled provisional fallback.
+    if (str(target_id).startswith("kb_") and
+        film.get("Дата премьеры Кинобизнес") and not saved.get("Дата премьеры")):
         patch["Дата премьеры"] = film["Дата премьеры Кинобизнес"]
-        patch["Источник даты"] = "Кинобизнес: график российских премьер"
+        patch["Источник даты"] = "Кинобизнес: предварительная дата российского проката"
     if not saved.get("Название"):
         patch["Название"] = film["Название"]
     if not saved.get("Ссылка"):
@@ -490,9 +495,10 @@ def collect():
             added += int(action == "added")
             ambiguous += int(action == "ambiguous")
         reconciled = reconcile_kb_orphans(conn)
+        corrected = clear_kb_primary_dates(conn)
         summary = (f"KB months OK={checked}, errors={errors}, listed={len(by_url)}, "
                    f"matched={matched}, new={added}, ambiguous={ambiguous}, "
-                   f"details={details_ok}, reconciled={reconciled}")
+                   f"details={details_ok}, reconciled={reconciled}, kp_date_only={corrected}")
         log(conn, "Kinobusiness release monitoring", "OK" if checked else "ERROR",
             summary, len(by_url))
         print(summary, flush=True)

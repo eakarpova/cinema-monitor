@@ -65,6 +65,13 @@ def upsert(conn, film, source):
     else:
         fields.pop("ID фильма", None)
         fields["ID Кинобизнес"] = fid
+    # The public Kinobusiness calendar can supply a useful alternative
+    # date, but never an authoritative release date for a Kinopoisk ID.
+    if (fid.isdigit() and "Дата премьеры" in fields and
+        ("kinobusiness.com" in str(source).lower() or
+         "кинобизнес" in str(fields.get("Источник даты", "")).lower())):
+        fields.pop("Дата премьеры", None)
+        fields.pop("Источник даты", None)
     if "Дата премьеры" in fields:
         date = valid_date(fields["Дата премьеры"])
         if date:
@@ -115,6 +122,44 @@ def upsert(conn, film, source):
             (fid, now, "Новый фильм", "", fields["Название"], source))
     conn.commit()
     return old is None
+
+
+
+def clear_kb_primary_dates(conn):
+    """Move legacy Kinobusiness-first dates to the secondary field on KP films.
+
+    Only rows with numeric Kinopoisk IDs AND explicitly Kinobusiness-sourced
+    primary dates are changed. Never touch Kinopoisk or Excel dates.
+    Existing dated film history is preserved in the audit trail.
+    """
+    corrected = 0
+    now = now_utc()
+    for row in list(conn.execute("SELECT id, payload FROM movies WHERE id NOT LIKE 'kb_%'")):
+        fid = str(row["id"])
+        if not fid.isdigit():
+            continue
+        saved = json.loads(row["payload"])
+        if "кинобизнес" not in str(saved.get("Источник даты", "")).casefold():
+            continue
+        old_date = valid_date(saved.get("Дата премьеры"))
+        if old_date and not saved.get("Дата премьеры Кинобизнес"):
+            saved["Дата премьеры Кинобизнес"] = old_date
+        saved.pop("Дата премьеры", None)
+        saved.pop("Источник даты", None)
+        conn.execute(
+            "UPDATE movies SET premiere=?, payload=?, updated_at=? WHERE id=?",
+            ("", json.dumps(saved, ensure_ascii=False), now, fid))
+        if old_date:
+            conn.execute("""INSERT INTO changes
+                (movie_id, detected_at, field, old_value, new_value, source)
+                VALUES (?,?,?,?,?,?)""",
+                (fid, now, "Приоритет источника даты", old_date,
+                 "Дата Кинопоиска ожидается",
+                 "Приоритет даты Кинопоиска: Кинобизнес сохранён как дополнительный источник"))
+        corrected += 1
+    if corrected:
+        conn.commit()
+    return corrected
 
 
 def log(conn, source, status, details, found=0):

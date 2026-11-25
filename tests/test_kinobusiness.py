@@ -3,7 +3,7 @@ import json
 import sqlite3
 import unittest
 
-from db import upsert
+from db import upsert, clear_kb_primary_dates
 from kinobusiness import (
     apply_record, match_target, parse_film_detail,
     parse_release_page, reconcile_kb_orphans, synthetic_id,
@@ -114,6 +114,71 @@ class KinobusinessSourceTests(unittest.TestCase):
         self.assertNotIn("ID фильма", saved)
         self.assertEqual(apply_record(self.conn, film), "matched")
         self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM movies").fetchone()[0], 1)
+
+    def test_kinopoisk_date_is_primary_even_when_kb_has_another_day(self):
+        upsert(self.conn, {
+            "id": "1670088", "Название": "Проверка даты",
+            "Год производства": 2027,
+            "Дата премьеры": "2027-09-30",
+            "Источник даты": "Календарь Кинопоиска: startDate"
+        }, "https://www.kinopoisk.ru/premiere/ru/2027/month/9/")
+        film = {
+            "Название": "Проверка даты",
+            "Год производства Кинобизнес": "2027",
+            "Дата премьеры Кинобизнес": "2027-09-01",
+            "Ссылка Кинобизнес": "https://www.kinobusiness.com/movies/check-date/"
+        }
+        self.assertEqual(apply_record(self.conn, film), "matched")
+        saved = self.row("1670088")
+        self.assertEqual(saved["Дата премьеры"], "2027-09-30")
+        self.assertEqual(saved["Источник даты"], "Календарь Кинопоиска: startDate")
+        self.assertEqual(saved["Дата премьеры Кинобизнес"], "2027-09-01")
+        self.assertEqual(self.conn.execute(
+            "SELECT COUNT(*) FROM movies").fetchone()[0], 1)
+
+    def test_kb_never_sets_primary_date_for_a_real_kinopoisk_id(self):
+        upsert(self.conn, {
+            "id": "99991", "Название": "Фильм без подтверждённой даты",
+            "Год производства": 2027
+        }, "https://www.kinopoisk.ru/film/99991/")
+        film = {
+            "Название": "Фильм без подтверждённой даты",
+            "Год производства Кинобизнес": "2027",
+            "Дата премьеры Кинобизнес": "2027-09-01",
+            "Ссылка Кинобизнес": "https://www.kinobusiness.com/movies/check-date-2/"
+        }
+        self.assertEqual(apply_record(self.conn, film), "matched")
+        saved = self.row("99991")
+        self.assertIsNone(saved.get("Дата премьеры"))
+        self.assertEqual(saved["Дата премьеры Кинобизнес"], "2027-09-01")
+        # A later Kinopoisk check is authoritative for the catalogue.
+        upsert(self.conn, {
+            "id": "99991", "Дата премьеры": "2027-09-24",
+            "Источник даты": "Календарь Кинопоиска: startDate"
+        }, "https://www.kinopoisk.ru/premiere/ru/2027/month/9/")
+        self.assertEqual(self.row("99991")["Дата премьеры"], "2027-09-24")
+
+    def test_migrate_old_kb_date_without_touching_kp_date(self):
+        upsert(self.conn, {
+            "id": "99992", "Название": "Фильм с прежней датой"
+        }, "https://www.kinopoisk.ru/film/99992/")
+        row = self.row("99992")
+        row["Дата премьеры"] = "2027-09-01"
+        row["Источник даты"] = "Кинобизнес: график российских премьер"
+        self.conn.execute(
+            "UPDATE movies SET premiere=?, payload=? WHERE id=?",
+            ("2027-09-01", json.dumps(row, ensure_ascii=False), "99992"))
+        upsert(self.conn, {
+            "id": "99993", "Название": "Фильм с Кинопоиска",
+            "Дата премьеры": "2027-09-30",
+            "Источник даты": "Календарь Кинопоиска: startDate"
+        }, "https://www.kinopoisk.ru/premiere/ru/2027/month/9/")
+        self.assertEqual(clear_kb_primary_dates(self.conn), 1)
+        revised = self.row("99992")
+        self.assertIsNone(revised.get("Дата премьеры"))
+        self.assertEqual(revised["Дата премьеры Кинобизнес"], "2027-09-01")
+        self.assertEqual(self.row("99993")["Дата премьеры"], "2027-09-30")
+        self.assertEqual(clear_kb_primary_dates(self.conn), 0)
 
     def test_ambiguous_title_is_not_added_again(self):
         upsert(self.conn, {"id": "11111", "Название": "Одинаковое название",

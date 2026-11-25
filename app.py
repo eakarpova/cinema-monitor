@@ -203,6 +203,19 @@ def pretty_date(movie):
 
 def card(movie, *, tag="", note=""):
     with st.container(border=True):
+        if likely_youth_theme(movie):
+            # A small visual marker in the top-right corner, instead of a
+            # full-length audience-classification caption.
+            st.markdown(
+                '<div style="display:flex;justify-content:flex-end;'
+                'margin:-5px -3px 2px 0">'
+                '<span title="Возможный детский или подростковый сюжет" '
+                'role="img" aria-label="Цветочек: детский или подростковый сюжет" '
+                'style="display:inline-flex;align-items:center;justify-content:center;'
+                'width:35px;height:35px;border-radius:50%;'
+                'background:#FCE7F3;box-shadow:0 1px 5px #00000012;'
+                'font-size:23px">🌸</span></div>',
+                unsafe_allow_html=True)
         if tag:
             st.markdown(f"**{tag}**")
         poster = available_text(movie.get("Постер URL"))
@@ -232,8 +245,6 @@ def card(movie, *, tag="", note=""):
         age = available_text(movie.get("Возрастное ограничение"))
         if age:
             st.caption("Возрастное ограничение: " + age)
-        if likely_youth_theme(movie):
-            st.caption("🎈 Возможный интерес для детской / подростковой аудитории")
         if note:
             st.info(note)
         short = available_text(movie.get("Краткое описание")) or available_text(movie.get("Описание"))
