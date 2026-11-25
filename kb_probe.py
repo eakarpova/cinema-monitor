@@ -53,3 +53,29 @@ for key in ["Описание","Сюжет","Синопсис","Премьера
     at=r.text.find(key)
     print("DETAILNEEDLE",key,at,r.text[max(at-220,0):at+700].replace("\n"," ")[:800],flush=True)
 print("detail meta",[(t.get("name"),t.get("property"),t.get("content")) for t in sub.select("meta[name],meta[property]")[:20]],flush=True)
+
+for url in ["https://www.kinobusiness.com/release/?2027",
+            "https://www.kinobusiness.com/release/?2027&11",
+            "https://www.kinobusiness.com/release/?YEAR=2027&MONTH=11",
+            "https://www.kinobusiness.com/release/index.php?year=2027",
+            "https://www.kinobusiness.com/release/?year=2027&month=9&distrebutor="]:
+    try:
+        r=S.get(url,timeout=16)
+        page=BeautifulSoup(r.text,"html.parser")
+        year=page.select_one("select#year option[selected]")
+        month=page.select_one("select#month option[selected]")
+        bricks=page.select(".sortable__brick")
+        print("TRY",url,"status",r.status_code, "year",(year.get("value") if year else None),
+              "month",(month.get("value") if month else None),"bricks",len(bricks),
+              "bodylen",len(r.content),flush=True)
+    except Exception as e:
+        print("TRY ERROR",url,type(e).__name__,str(e),flush=True)
+base=BeautifulSoup(S.get("https://www.kinobusiness.com/release/",timeout=16).text,"html.parser")
+date=base.select_one(".sortable__date")
+if date:
+    print("DATEANCESTORS", [(p.name,p.get("class")) for p in list(date.parents)[:5]],flush=True)
+    print("DATEPARENT",str(date.parent)[:3800].replace("\n"," "),flush=True)
+for text in base.find_all("script"):
+    script=text.string or ""
+    if "year" in script and "month" in script and ("release" in script or "sortable" in script):
+        print("SCRIPT",script[:1900].replace("\n"," "),flush=True)
