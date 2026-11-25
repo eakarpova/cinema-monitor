@@ -32,3 +32,24 @@ for url in urls:
         print("TITLES",[(a.get("href"),a.get_text(" ",strip=True)[:55]) for a in soup.select("a[href]") if "2027" in a.get_text(" ",strip=True)][:12],flush=True)
     except Exception as e:
         print("ERROR",type(e).__name__,str(e),flush=True)
+
+r=S.get("https://www.kinobusiness.com/release/",timeout=20)
+soup=BeautifulSoup(r.text,"html.parser")
+for needle in ["2027","Фильтровать по:","Месяц:"]:
+    at=r.text.find(needle)
+    print("\nNEEDLE",needle,"POSITION",at,"NEAR",r.text[max(0,at-650):at+1150].replace("\n"," ")[:1800],flush=True)
+for node in soup.select('[data-year],[data-value],[data-filter],a[href*="release"]')[:70]:
+    print("FILTERNODE",str(node)[:500].replace("\n"," "),flush=True)
+for node in soup.select("h2,h3,h4,.sortable__title,.sortable__date,.sortable__header")[:16]:
+    print("DATEBLOCK",str(node)[:500].replace("\n"," "),flush=True)
+for tag in soup.select("script[src]"):
+    val=tag.get("src","")
+    if "relea" in val or "filter" in val or "sortable" in val:
+        print("JS",val,flush=True)
+r=S.get("https://www.kinobusiness.com/movies/aytmatov/",timeout=20)
+sub=BeautifulSoup(r.text,"html.parser")
+print("\nDETAIL",r.status_code,len(r.content),r.url,flush=True)
+for key in ["Описание","Сюжет","Синопсис","Премьера","Россия","2026"]:
+    at=r.text.find(key)
+    print("DETAILNEEDLE",key,at,r.text[max(at-220,0):at+700].replace("\n"," ")[:800],flush=True)
+print("detail meta",[(t.get("name"),t.get("property"),t.get("content")) for t in sub.select("meta[name],meta[property]")[:20]],flush=True)
