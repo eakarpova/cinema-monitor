@@ -12,6 +12,10 @@ _FOCUS_TEXT = (
     "принцес", "фея", "феи", "волшебн", "сказоч"
 )
 
+# Explicit franchise hints: titles may arrive before their genre or synopsis.
+# These are editorial search hints, not official age ratings.
+_YOUTH_FRANCHISES = ("ум и хрум", "сила пяти вкусов")
+
 
 def selected_any(value, selected):
     pieces = {x.strip().casefold() for x in re.split(r"[,;]", str(value or ""))}
@@ -70,15 +74,17 @@ def likely_youth_theme(record):
     genres = str(record.get("Жанры") or "").casefold()
     title = str(record.get("Название") or "").casefold()
     description = str(record.get("Краткое описание") or record.get("Описание") or "").casefold()
-    return any(word in genres for word in _FOCUS_GENRES) or any(
-        word in title or word in description for word in _FOCUS_TEXT)
+    return (any(franchise in title for franchise in _YOUTH_FRANCHISES) or
+            any(word in genres for word in _FOCUS_GENRES) or
+            any(word in title or word in description for word in _FOCUS_TEXT))
 
 
 def applicable_events(changes, movies):
     """Events always respect movie selections, unlike the old global table."""
     if changes.empty or movies.empty:
         return changes.iloc[0:0].copy()
-    ids = set(movies["ID фильма"].dropna().map(lambda v: re.sub(r"\.0$", "", str(v))))
+    key = "_movie_id" if "_movie_id" in movies.columns else "ID фильма"
+    ids = set(movies[key].dropna().map(lambda v: re.sub(r"\.0$", "", str(v))))
     return changes[changes["movie_id"].astype(str).isin(ids)].copy()
 
 

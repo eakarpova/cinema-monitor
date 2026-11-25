@@ -56,11 +56,15 @@ def source_rank(source):
 def upsert(conn, film, source):
     """Merge only populated verified fields without dropping existing details."""
     fid = str(film.get("id") or film.get("ID фильма") or "").strip()
-    if not fid.isdigit():
-        raise ValueError("Invalid Kinopoisk ID")
+    if not (fid.isdigit() or re.fullmatch(r"kb_[0-9a-f]{16}", fid)):
+        raise ValueError("Invalid movie ID")
     fields = {key: value for key, value in film.items()
               if key != "id" and value is not None and value != "" and value != []}
-    fields["ID фильма"] = fid
+    if fid.isdigit():
+        fields["ID фильма"] = fid
+    else:
+        fields.pop("ID фильма", None)
+        fields["ID Кинобизнес"] = fid
     if "Дата премьеры" in fields:
         date = valid_date(fields["Дата премьеры"])
         if date:

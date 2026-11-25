@@ -31,11 +31,16 @@ if not rows:
     st.stop()
 
 df = pd.DataFrame([json.loads(row["payload"]) for row in rows])
+df["_movie_id"] = [str(row["id"]) for row in rows]
 fields = ["Название", "Дата премьеры", "Год календаря", "Год производства",
           "Страна", "Жанры", "Прокатчик в России", "Рейтинг Кинопоиска",
           "Количество оценок КП", "Ждут премьеру", "Возрастное ограничение",
           "Описание", "Краткое описание", "Режиссер", "Актеры", "Продюсер",
-          "Постер URL", "ID фильма", "Ссылка", "Источник даты"]
+          "Постер URL", "ID фильма", "Ссылка", "Источник даты",
+          "Ссылка Кинобизнес", "Дата премьеры Кинобизнес",
+          "Описание Кинобизнес", "Жанры Кинобизнес",
+          "Прокатчик Кинобизнес", "Страна Кинобизнес",
+          "Возрастное ограничение Кинобизнес"]
 for col in fields:
     if col not in df.columns:
         df[col] = None
@@ -99,8 +104,7 @@ f = filter_movies(
     date_range=date_range, extra_col=extra_col, extra_value=extra_value,
 )
 st.sidebar.caption(f"По выбранным фильтрам: {len(f)} из {len(df)} фильмов.")
-f_ids = f["ID фильма"].fillna("").map(
-    lambda x: re.sub(r"\.0$", "", str(x)))
+f_ids = f["_movie_id"].astype(str)
 filtered_changes = applicable_events(changes, f)
 
 recent = pd.DataFrame()
@@ -219,6 +223,14 @@ def card(movie, *, tag="", note=""):
                 link = "https://www.kinopoisk.ru/film/" + fid + "/"
         if link.startswith("https://www.kinopoisk.ru/film/"):
             st.link_button("Открыть на Кинопоиске", link, use_container_width=True)
+        kb_link = available_text(movie.get("Ссылка Кинобизнес"))
+        if kb_link.startswith("https://www.kinobusiness.com/movies/"):
+            st.link_button("Карточка Кинобизнес", kb_link, use_container_width=True)
+        kb_date = available_text(movie.get("Дата премьеры Кинобизнес"))
+        main_date = available_text(movie.get("Дата премьеры"))
+        if kb_date and main_date and kb_date != main_date:
+            st.caption(f"⚠️ Даты источников различаются: "
+                       f"Кинопоиск/база {main_date}, Кинобизнес {kb_date}")
 
 
 def card_grid(frame, *, limit=None, labels=None, notes=None):
@@ -473,12 +485,15 @@ with tab_catalog:
         "Количество оценок КП", "Ждут премьеру", "Режиссер", "Актеры",
         "Продюсер", "Краткое описание", "Описание", "Постер URL",
         "ID фильма", "Источник даты", "Год календаря", "Ссылка",
+        "Ссылка Кинобизнес", "Дата премьеры Кинобизнес",
+        "Описание Кинобизнес", "Жанры Кинобизнес",
+        "Прокатчик Кинобизнес", "Страна Кинобизнес",
     ]
     defaults = [
         "Дата премьеры", "Название", "Год производства", "Страна", "Жанры",
         "Возрастное ограничение", "Прокатчик в России",
         "Рейтинг Кинопоиска", "Количество оценок КП", "Ждут премьеру",
-        "ID фильма", "Источник даты", "Ссылка",
+        "ID фильма", "Источник даты", "Ссылка", "Ссылка Кинобизнес",
     ]
     visible_columns = st.multiselect(
         "Какие столбцы показывать", options=columns,
@@ -499,7 +514,7 @@ with tab_catalog:
                 selected["Дата премьеры"], errors="coerce")
         for text_col in selected.columns.difference(
                 ["Рейтинг Кинопоиска", "Количество оценок КП",
-                 "Ждут премьеру", "Дата премьеры"]):
+                 "Ждут премьеру", "Дата премьеры", "Дата премьеры Кинобизнес"]):
             selected[text_col] = selected[text_col].map(
                 lambda v: None if v is None or
                 (isinstance(v, float) and pd.isna(v)) else str(v))
@@ -512,7 +527,8 @@ with tab_catalog:
             selected, key="catalogue_" + fingerprint,
             use_container_width=True, hide_index=True, height=560,
             column_config={
-                "Ссылка": st.column_config.LinkColumn("Карточка"),
+                "Ссылка": st.column_config.LinkColumn("Кинопоиск"),
+                "Ссылка Кинобизнес": st.column_config.LinkColumn("Кинобизнес"),
                 "Постер URL": st.column_config.ImageColumn("Постер"),
                 "Ждут премьеру": st.column_config.NumberColumn("Ждут премьеру"),
             })
