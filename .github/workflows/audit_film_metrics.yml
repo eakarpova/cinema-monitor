@@ -2,7 +2,7 @@ name: Audit film deduplication and expected count
 on:
   push:
     branches: [main]
-    paths: [".github/workflows/audit_film_metrics.yml"]
+    paths: [".github/workflows/audit_film_metrics.yml","audit_film_metrics.py"]
   workflow_dispatch:
 permissions:
   contents: read
