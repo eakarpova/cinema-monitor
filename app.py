@@ -38,40 +38,10 @@ fields = ["Название", "Дата премьеры", "Год календ�
           "Количество оценок КП", "Ждут премьеру", "Ждут премьеру проверено",
           "Возрастное ограничение",
           "Описание", "Краткое описание", "Режиссер", "Актеры", "Продюсер",
-          "Постер URL", "ID фильма", "Ссылка", "Источник даты",
-          "Ссылка Кинобизнес", "Дата премьеры Кинобизнес",
-          "Описание Кинобизнес", "Жанры Кинобизнес",
-          "Прокатчик Кинобизнес", "Страна Кинобизнес",
-          "Возрастное ограничение Кинобизнес"]
+          "Постер URL", "ID фильма", "Ссылка", "Источник даты"]
 for col in fields:
     if col not in df.columns:
         df[col] = None
-
-def union_genres(movie):
-    pieces = []
-    seen = set()
-    for column in ("Жанры", "Жанры Кинобизнес"):
-        raw = movie.get(column)
-        if not raw or str(raw).lower() in ("nan", "none"):
-            continue
-        for value in re.split(r"[,;/]", str(raw)):
-            value = value.strip()
-            if value and value.casefold() not in seen:
-                pieces.append(value)
-                seen.add(value.casefold())
-    return ", ".join(pieces) if pieces else None
-
-
-df["Жанры"] = df.apply(union_genres, axis=1)
-
-# Existing old planned-to-watch numbers remain in history, but are never
-# presented as current unless confirmed by a recent successful card check.
-df["Ждут премьеру (архив)"] = df["Ждут премьеру"].copy()
-checked_wait = pd.to_datetime(df["Ждут премьеру проверено"], utc=True, errors="coerce")
-now_wait = pd.Timestamp.now(tz="UTC")
-recent_wait = (checked_wait.notna() & (checked_wait <= now_wait) &
-               (checked_wait >= now_wait - pd.Timedelta(days=8)))
-df.loc[~recent_wait, "Ждут премьеру"] = None
 
 df["Дата"] = pd.to_datetime(df["Дата премьеры"], errors="coerce")
 df["Год премьеры"] = df["Дата"].dt.year
@@ -164,19 +134,6 @@ if not summary_runs.empty:
 else:
     st.warning("Автоматический мониторинг ещё не проходил успешную проверку. "
                "Зайдите в GitHub → Actions → Daily premiere check.")
-
-kb_runs = (runs[runs["source"].fillna("").str.contains(
-    "Kinobusiness release monitoring", case=False)]
-    if not runs.empty else pd.DataFrame())
-if not kb_runs.empty:
-    kb_latest = kb_runs.iloc[0]
-    kb_stamp = pd.to_datetime(kb_latest["checked_at"], utc=True, errors="coerce")
-    kb_time = kb_stamp.strftime("%d.%m.%Y %H:%M UTC") if pd.notna(kb_stamp) else "неизвестно"
-    if kb_latest["status"] == "OK":
-        st.caption(f"✅ Кинобизнес · {kb_time} · {kb_latest['details']}")
-    else:
-        st.warning(f"Кинобизнес: последняя проверка не удалась ({kb_time}). "
-                   "Существующие сведения сохранены.")
 
 metric_a, metric_b, metric_c, metric_d = st.columns(4)
 metric_a.metric("Фильмов в выборке", len(f))
@@ -277,14 +234,9 @@ def card(movie, *, tag="", note=""):
         if note:
             st.info(note)
         short = available_text(movie.get("Краткое описание")) or available_text(movie.get("Описание"))
-        other_synopsis = available_text(movie.get("Описание Кинобизнес"))
-        if short or other_synopsis:
+        if short:
             with st.expander("О фильме"):
-                if short:
-                    st.write(short[:1200])
-                if other_synopsis and other_synopsis != short:
-                    st.caption("Дополнительное описание — Кинобизнес")
-                    st.write(other_synopsis[:1600])
+                st.write(short[:1200])
                 cast = available_text(movie.get("Актеры"))
                 director = available_text(movie.get("Режиссер"))
                 if cast:
@@ -298,20 +250,6 @@ def card(movie, *, tag="", note=""):
                 link = "https://www.kinopoisk.ru/film/" + fid + "/"
         if link.startswith("https://www.kinopoisk.ru/film/"):
             st.link_button("Открыть на Кинопоиске", link, use_container_width=True)
-        kb_link = available_text(movie.get("Ссылка Кинобизнес"))
-        if kb_link.startswith("https://www.kinobusiness.com/movies/"):
-            st.link_button("Карточка Кинобизнес", kb_link, use_container_width=True)
-        kb_date = available_text(movie.get("Дата премьеры Кинобизнес"))
-        main_date = available_text(movie.get("Дата премьеры"))
-        if kb_date and main_date:
-            kp_dt = pd.to_datetime(main_date, errors="coerce")
-            kb_dt = pd.to_datetime(kb_date, errors="coerce")
-            if (pd.notna(kp_dt) and pd.notna(kb_dt) and
-                (kp_dt.year, kp_dt.month) != (kb_dt.year, kb_dt.month)):
-                st.caption(
-                    f"⚠️ Уточните месяц российского проката: "
-                    f"Кинопоиск {main_date}, Кинобизнес {kb_date}"
-                )
 
 
 def card_grid(frame, *, limit=None, labels=None, notes=None):
@@ -575,15 +513,12 @@ with tab_catalog:
         "Количество оценок КП", "Ждут премьеру", "Режиссер", "Актеры",
         "Продюсер", "Краткое описание", "Описание", "Постер URL",
         "ID фильма", "Источник даты", "Год календаря", "Ссылка",
-        "Ссылка Кинобизнес", "Дата премьеры Кинобизнес",
-        "Описание Кинобизнес", "Жанры Кинобизнес",
-        "Прокатчик Кинобизнес", "Страна Кинобизнес",
     ]
     defaults = [
         "Дата премьеры", "Название", "Год производства", "Страна", "Жанры",
         "Возрастное ограничение", "Прокатчик в России",
         "Рейтинг Кинопоиска", "Количество оценок КП", "Ждут премьеру",
-        "ID фильма", "Источник даты", "Ссылка", "Ссылка Кинобизнес",
+        "ID фильма", "Источник даты", "Ссылка",
     ]
     visible_columns = st.multiselect(
         "Какие столбцы показывать", options=columns,
@@ -604,7 +539,7 @@ with tab_catalog:
                 selected["Дата премьеры"], errors="coerce")
         for text_col in selected.columns.difference(
                 ["Рейтинг Кинопоиска", "Количество оценок КП",
-                 "Ждут премьеру", "Дата премьеры", "Дата премьеры Кинобизнес"]):
+                 "Ждут премьеру", "Дата премьеры"]):
             selected[text_col] = selected[text_col].map(
                 lambda v: None if v is None or
                 (isinstance(v, float) and pd.isna(v)) else str(v))
@@ -618,7 +553,6 @@ with tab_catalog:
             use_container_width=True, hide_index=True, height=560,
             column_config={
                 "Ссылка": st.column_config.LinkColumn("Кинопоиск"),
-                "Ссылка Кинобизнес": st.column_config.LinkColumn("Кинобизнес"),
                 "Постер URL": st.column_config.ImageColumn("Постер"),
                 "Ждут премьеру": st.column_config.NumberColumn("Ждут премьеру"),
             })

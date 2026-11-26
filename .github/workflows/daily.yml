@@ -5,7 +5,8 @@ on:
     branches: [main]
     paths:
       - 'monitor.py'
-      - 'kinobusiness.py'
+      - 'db.py'
+      - 'cleanup_secondary.py'
       - '.github/workflows/daily.yml'
   schedule:
     - cron: '20 5 * * *'
@@ -30,6 +31,8 @@ jobs:
         run: pip install -r requirements.txt
       - name: Test parsers and database
         run: python -m unittest discover -s tests -v
+      - name: Purge retired source from catalogue
+        run: python cleanup_secondary.py
       - name: Check Kinopoisk premieres
         id: monitor
         continue-on-error: true
@@ -37,13 +40,6 @@ jobs:
           MAX_CARD_CHECKS: '50'
           REQUEST_DELAY: '0.6'
         run: python monitor.py
-      - name: Enrich premieres from Kinobusiness
-        id: kinobusiness
-        continue-on-error: true
-        env:
-          KB_DETAIL_LIMIT: '25'
-          KB_REQUEST_DELAY: '0.8'
-        run: python kinobusiness.py
       - name: Save database and diagnostics
         if: always()
         run: |
@@ -55,10 +51,7 @@ jobs:
             git push
           fi
       - name: Report source failure
-        if: steps.monitor.outcome == 'failure' && steps.kinobusiness.outcome == 'failure'
+        if: steps.monitor.outcome == 'failure'
         run: |
-          echo 'Both premiere sources failed; previous data and diagnostics were preserved.'
+          echo 'Kinopoisk was unavailable; previous verified movies were preserved.'
           exit 1
-      - name: Report partial source failure
-        if: steps.monitor.outcome == 'failure' || steps.kinobusiness.outcome == 'failure'
-        run: echo 'One source was unavailable. See the dashboard diagnostics and job logs.'
