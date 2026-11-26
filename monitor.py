@@ -325,7 +325,12 @@ def extract_film_extra(ssr_data, film_id):
     kp = rating.get("kinopoisk") or {}
     put("Рейтинг Кинопоиска", kp.get("value"))
     put("Количество оценок КП", kp.get("count"))
-    put("Ждут премьеру", (rating.get("plannedToWatch") or {}).get("count"))
+    planned = rating.get("plannedToWatch")
+    if isinstance(planned, dict):
+        planned_count = planned.get("count")
+        if isinstance(planned_count, (int, float)) and planned_count >= 0:
+            put("Ждут премьеру", int(planned_count))
+            put("Ждут премьеру проверено", dt.datetime.now(dt.timezone.utc).isoformat())
 
     items = russian_release(film).get("items") or []
     if items:
@@ -481,16 +486,25 @@ def run():
         today = dt.date.today()
         soon = []
         missing = []
+        waiting_candidates = []
         for fid, payload in all_rows:
             day = valid_date(payload.get("Дата премьеры"))
             date = dt.date.fromisoformat(day) if day else None
             if date and today <= date <= today + dt.timedelta(days=180):
                 soon.append((date, fid))
+            if date and date >= today:
+                try:
+                    wait_count = float(payload.get("Ждут премьеру") or 0)
+                except (TypeError, ValueError):
+                    wait_count = 0
+                if wait_count > 0:
+                    waiting_candidates.append((wait_count, fid))
             if (not clean(payload.get("Жанры")) or not clean(payload.get("Постер URL"))
                     or not clean(payload.get("Страна"))):
                 missing.append((date or dt.date(2031, 1, 1), fid))
         soon.sort()
         missing.sort()
+        waiting_candidates.sort(reverse=True)
         to_check = []
         def include(ids, maximum):
             for fid in ids:
@@ -499,8 +513,11 @@ def run():
                 if fid not in to_check:
                     to_check.append(fid)
                     maximum -= 1
-        include([fid for _, fid in soon], CARD_LIMIT // 3)
-        include(new_ids, CARD_LIMIT // 3)
+        # Re-check public anticipation leaders daily, not only on a slow
+        # rotation: otherwise a cached value may differ dramatically from KP.
+        include([fid for _, fid in waiting_candidates], max(5, CARD_LIMIT // 4))
+        include([fid for _, fid in soon], CARD_LIMIT // 4)
+        include(new_ids, CARD_LIMIT // 5)
         include([fid for _, fid in missing], max(0, CARD_LIMIT - len(to_check) - 5))
         include(staggered([fid for fid, _ in all_rows], max(5, CARD_LIMIT)), CARD_LIMIT)
         cards_ok = cards_error = cards_genres = cards_posters = cards_countries = 0

@@ -116,3 +116,38 @@ def leaders(movies):
             idx = numbers[eligible].idxmax()
             found[label] = movies.loc[idx]
     return found
+
+
+def top_expected(movies, *, limit=5, now=None, max_age_days=8):
+    """Rank verified, recently fetched planned-to-watch totals only.
+
+    Historical counts are kept in SQLite, but cannot masquerade as live KP
+    counts when a card was not successfully checked recently.
+    """
+    if movies.empty or "Ждут премьеру" not in movies.columns or "Ждут премьеру проверено" not in movies.columns:
+        return movies.iloc[:0].copy()
+    values = pd.to_numeric(movies["Ждут премьеру"], errors="coerce")
+    checked = pd.to_datetime(movies["Ждут премьеру проверено"], utc=True, errors="coerce")
+    now = pd.Timestamp.now(tz="UTC") if now is None else pd.Timestamp(now)
+    if now.tzinfo is None:
+        now = now.tz_localize("UTC")
+    mask = (values > 0) & checked.notna() & (checked <= now) & (
+        checked >= now - pd.Timedelta(days=max_age_days))
+    out = movies.loc[mask].copy()
+    if out.empty:
+        return out
+    out["_wait_score"] = values.loc[out.index]
+    return out.sort_values(["_wait_score", "Дата", "Название"],
+                           ascending=[False, True, True],
+                           na_position="last").head(limit).drop(columns=["_wait_score"])
+
+
+def metric_is_fresh(record, *, now=None, max_age_days=8):
+    """True only for a valid current planned-to-watch count."""
+    checked = pd.to_datetime(record.get("Ждут премьеру проверено"), utc=True, errors="coerce")
+    score = pd.to_numeric(record.get("Ждут премьеру"), errors="coerce")
+    now = pd.Timestamp.now(tz="UTC") if now is None else pd.Timestamp(now)
+    if now.tzinfo is None:
+        now = now.tz_localize("UTC")
+    return bool(pd.notna(score) and score > 0 and pd.notna(checked) and
+                now - pd.Timedelta(days=max_age_days) <= checked <= now)

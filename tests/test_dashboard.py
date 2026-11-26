@@ -5,7 +5,7 @@ import pandas as pd
 
 from dashboard_logic import (
     applicable_events, filter_movies, leaders, likely_youth_theme,
-    selected_any, target_month,
+    selected_any, target_month, top_expected, metric_is_fresh,
 )
 
 
@@ -84,6 +84,32 @@ class DashboardTests(unittest.TestCase):
         self.assertFalse(likely_youth_theme(self.df.iloc[1]))
         self.assertTrue(likely_youth_theme(self.df.iloc[2]))
         self.assertEqual(len(self.df), 3)
+
+    def test_top_five_has_fresh_verification_and_correct_order(self):
+        day = pd.Timestamp("2026-11-26T14:00:00Z")
+        df = pd.DataFrame([
+            {"Название": f"Фильм {i}", "Дата": pd.Timestamp("2027-01-01"),
+             "Ждут премьеру": 1000+i,
+             "Ждут премьеру проверено": (
+                 (day - pd.Timedelta(days=1)).isoformat() if i != 8
+                 else (day - pd.Timedelta(days=30)).isoformat())}
+            for i in range(10)
+        ])
+        result = top_expected(df, limit=5, now=day)
+        self.assertEqual(len(result), 5)
+        self.assertNotIn("Фильм 8", result["Название"].tolist())
+        self.assertEqual(result.iloc[0]["Название"], "Фильм 9")
+        self.assertTrue(metric_is_fresh(result.iloc[0], now=day))
+        self.assertFalse(metric_is_fresh(df.iloc[8], now=day))
+
+    def test_legacy_wait_count_not_assumed_current(self):
+        row = pd.Series({"Ждут премьеру": 80943,
+                         "Ждут премьеру проверено": None})
+        self.assertFalse(metric_is_fresh(row))
+        df = pd.DataFrame([{"Название": "Без проверки", "Дата": pd.Timestamp("2027-01-01"),
+                            "Ждут премьеру": 80943,
+                            "Ждут премьеру проверено": None}])
+        self.assertTrue(top_expected(df).empty)
 
     def test_expected_premiere_uses_only_real_wait_counts(self):
         ranked = leaders(self.df)

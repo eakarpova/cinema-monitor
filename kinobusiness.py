@@ -43,6 +43,28 @@ def norm_title(value):
     return "".join(c for c in value if c.isalnum())
 
 
+def title_keys(film):
+    """Title aliases accounting for original-title and re-release annotations."""
+    raw = tidy(film.get("Название"))
+    originals = [tidy(film.get(k)) for k in (
+        "Оригинальное название Кинобизнес", "Оригинальное название")]
+    originals = [x for x in originals if x]
+    variants = [raw]
+    without_note = re.sub(
+        r"\s*[\(\[]\s*(?:повторный\s+)?(?:пере|пере-)?выпуск(?:\s+фильма)?\s*[\)\]]\s*$",
+        "", raw, flags=re.IGNORECASE)
+    without_note = re.sub(
+        r"\s*[\(\[]\s*(?:повторный\s+)?перевыпуск\s*[\)\]]\s*$",
+        "", without_note, flags=re.IGNORECASE)
+    variants.append(without_note)
+    for name in (raw, without_note):
+        for original in originals:
+            if len(original) >= 3 and name.casefold().endswith(original.casefold()):
+                variants.append(name[:-len(original)].strip(" \u2014-:()[]"))
+    variants.extend(originals)
+    return {norm_title(value) for value in variants if norm_title(value)}
+
+
 def safe_kb_url(value):
     if not value:
         return ""
@@ -217,9 +239,8 @@ def match_target(conn, film):
     Do not collapse a remake or same-name franchise entry without an extra
     characteristic. A near-collision goes into logs instead of a duplicate.
     """
-    name = norm_title(film.get("Название"))
-    original = norm_title(film.get("Оригинальное название Кинобизнес"))
-    if not name:
+    wanted = title_keys(film)
+    if not wanted:
         return None, False
     direct_url = film.get("Ссылка Кинобизнес", "")
     existing = []
@@ -230,14 +251,8 @@ def match_target(conn, film):
         existing.append((row["id"], saved))
     title_hits = []
     for fid, saved in existing:
-        names = {
-            norm_title(saved.get("Название")),
-            norm_title(saved.get("Название из карточки")),
-            norm_title(saved.get("Оригинальное название")),
-            norm_title(saved.get("Оригинальное название Кинобизнес")),
-        }
-        names.discard("")
-        if (name in names) or (original and original in names):
+        if wanted.intersection(title_keys(saved) | {
+            norm_title(saved.get("Название из карточки"))}):
             title_hits.append((fid, saved))
     if not title_hits:
         return None, False
@@ -368,9 +383,8 @@ def match_target_excluding_self(conn, film, excluded):
     # Avoid an exact-URL self-match by using a temporary minimal in-memory view
     # of competing candidates. Reuse the same conservative year/date criteria.
     rows = conn.execute("SELECT id,payload FROM movies WHERE id != ?", (excluded,)).fetchall()
-    name = norm_title(film.get("Название"))
-    orig = norm_title(film.get("Оригинальное название Кинобизнес"))
-    if not name:
+    wanted = title_keys(film)
+    if not wanted:
         return None, False
     yy = as_year(film.get("Год производства Кинобизнес"))
     date = film.get("Дата премьеры Кинобизнес")
@@ -378,11 +392,8 @@ def match_target_excluding_self(conn, film, excluded):
     uncertain = []
     for row in rows:
         existing = json.loads(row["payload"])
-        names = {norm_title(existing.get(k)) for k in (
-            "Название", "Название из карточки", "Оригинальное название",
-            "Оригинальное название Кинобизнес")}
-        names.discard("")
-        if name not in names and (not orig or orig not in names):
+        names = title_keys(existing) | {norm_title(existing.get("Название из карточки"))}
+        if not wanted.intersection(names):
             continue
         uncertain.append(row["id"])
         year = as_year(existing.get("Год производства") or

@@ -209,6 +209,72 @@ class KinobusinessSourceTests(unittest.TestCase):
         self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM movies").fetchone()[0], 1)
         self.assertEqual(self.row("12345")["Описание"], "Подробный сюжет.")
 
+    def test_english_original_suffix_matches_same_movie(self):
+        upsert(self.conn, {
+            "id": "628328", "Название": "Ведьмин лес",
+            "Год производства": "2026",
+            "Дата премьеры": "2026-12-03",
+            "Источник даты": "Календарь Кинопоиска: startDate",
+        }, "https://www.kinopoisk.ru/film/628328/")
+        film = {
+            "Название": "ВЕДЬМИН ЛЕС Wildwood",
+            "Оригинальное название Кинобизнес": "Wildwood",
+            "Год производства Кинобизнес": "2026",
+            "Дата премьеры Кинобизнес": "2026-12-03",
+            "Ссылка Кинобизнес": "https://www.kinobusiness.com/movies/vedmin-les/",
+        }
+        self.assertEqual(apply_record(self.conn, film), "matched")
+        self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM movies").fetchone()[0], 1)
+        self.assertEqual(self.row("628328")["Ссылка Кинобизнес"],
+                         film["Ссылка Кинобизнес"])
+
+    def test_rerelease_suffix_matches_original_title(self):
+        upsert(self.conn, {
+            "id": "324206", "Название": "Щелкунчик и Крысиный король",
+            "Год производства": 2010,
+            "Дата премьеры": "2026-12-03",
+            "Источник даты": "Календарь Кинопоиска: startDate",
+        }, "https://www.kinopoisk.ru/film/324206/")
+        film = {
+            "Название": "ЩЕЛКУНЧИК И КРЫСИНЫЙ КОРОЛЬ (ПЕРЕВЫПУСК)",
+            "Оригинальное название Кинобизнес": "The Nutcracker",
+            "Год производства Кинобизнес": "2010",
+            "Дата премьеры Кинобизнес": "2026-12-03",
+            "Ссылка Кинобизнес":
+                "https://www.kinobusiness.com/movies/shchelkunchik-i-krysinyy-korol-perevypusk/",
+        }
+        self.assertEqual(apply_record(self.conn, film), "matched")
+        self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM movies").fetchone()[0], 1)
+
+    def test_merge_preexisting_duplicate_kb_rows_into_kp_rows(self):
+        film_pairs = [
+            ("628328", "Ведьмин лес", 2026,
+             "ВЕДЬМИН ЛЕС Wildwood", "Wildwood", "2026",
+             "https://www.kinobusiness.com/movies/vedmin-les/"),
+            ("324206", "Щелкунчик и Крысиный король", 2010,
+             "ЩЕЛКУНЧИК И КРЫСИНЫЙ КОРОЛЬ (ПЕРЕВЫПУСК)", "The Nutcracker", "2010",
+             "https://www.kinobusiness.com/movies/shchelkunchik-i-krysinyy-korol-perevypusk/"),
+        ]
+        for kid, title, year, kb_title, original, kb_year, url in film_pairs:
+            upsert(self.conn, {
+                "id": kid, "Название": title, "Год производства": year,
+                "Дата премьеры": "2026-12-03",
+                "Источник даты": "Календарь Кинопоиска: startDate",
+            }, f"https://www.kinopoisk.ru/film/{kid}/")
+            upsert(self.conn, {
+                "id": synthetic_id(url), "Название": kb_title,
+                "Оригинальное название Кинобизнес": original,
+                "Год производства Кинобизнес": kb_year,
+                "Дата премьеры Кинобизнес": "2026-12-03",
+                "Ссылка Кинобизнес": url,
+                "Описание Кинобизнес": "Подробный синопсис."
+            }, url)
+        self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM movies").fetchone()[0], 4)
+        self.assertEqual(reconcile_kb_orphans(self.conn), 2)
+        self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM movies").fetchone()[0], 2)
+        for kid, *_ in film_pairs:
+            self.assertIn("Подробный синопсис", self.row(kid)["Описание"])
+
     def test_youth_franchise_even_without_genres(self):
         self.assertTrue(likely_youth_theme({
             "Название": "Ум и Хрум. Сила пяти вкусов", "Жанры": None,

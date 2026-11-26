@@ -15,7 +15,8 @@ import plotly.express as px
 import streamlit as st
 from db import connect
 from dashboard_logic import (filter_movies, applicable_events, likely_youth_theme,
-                             leaders, numeric_values, target_month)
+                             leaders, numeric_values, target_month,
+                             top_expected, metric_is_fresh)
 
 st.set_page_config(page_title="Кинопремьеры России", page_icon="🎬", layout="wide")
 st.title("🎬 Кинопремьеры России · 2026–2030")
@@ -34,7 +35,8 @@ df = pd.DataFrame([json.loads(row["payload"]) for row in rows])
 df["_movie_id"] = [str(row["id"]) for row in rows]
 fields = ["Название", "Дата премьеры", "Год календаря", "Год производства",
           "Страна", "Жанры", "Прокатчик в России", "Рейтинг Кинопоиска",
-          "Количество оценок КП", "Ждут премьеру", "Возрастное ограничение",
+          "Количество оценок КП", "Ждут премьеру", "Ждут премьеру проверено",
+          "Возрастное ограничение",
           "Описание", "Краткое описание", "Режиссер", "Актеры", "Продюсер",
           "Постер URL", "ID фильма", "Ссылка", "Источник даты",
           "Ссылка Кинобизнес", "Дата премьеры Кинобизнес",
@@ -61,6 +63,15 @@ def union_genres(movie):
 
 
 df["Жанры"] = df.apply(union_genres, axis=1)
+
+# Existing old planned-to-watch numbers remain in history, but are never
+# presented as current unless confirmed by a recent successful card check.
+df["Ждут премьеру (архив)"] = df["Ждут премьеру"].copy()
+checked_wait = pd.to_datetime(df["Ждут премьеру проверено"], utc=True, errors="coerce")
+now_wait = pd.Timestamp.now(tz="UTC")
+recent_wait = (checked_wait.notna() & (checked_wait <= now_wait) &
+               (checked_wait >= now_wait - pd.Timedelta(days=8)))
+df.loc[~recent_wait, "Ждут премьеру"] = None
 
 df["Дата"] = pd.to_datetime(df["Дата премьеры"], errors="coerce")
 df["Год премьеры"] = df["Дата"].dt.year
@@ -219,11 +230,21 @@ def card(movie, *, tag="", note=""):
         if tag:
             st.markdown(f"**{tag}**")
         poster = available_text(movie.get("Постер URL"))
+        # A fixed poster viewport makes low-res portraits from Kinobusiness
+        # and wide Kinopoisk cards visually consistent without upscaling.
         if poster.startswith("https://"):
-            st.image(poster, use_container_width=True)
+            st.markdown(
+                '<div style="height:240px;width:100%;display:flex;'
+                'align-items:center;justify-content:center;overflow:hidden;'
+                'border-radius:10px;background:#1f2330">'
+                '<img loading="lazy" alt="Постер фильма" src="' +
+                html.escape(poster, quote=True) +
+                '" style="width:auto;height:auto;max-height:100%;'
+                'max-width:100%;object-fit:contain;display:block"/>'
+                '</div>', unsafe_allow_html=True)
         else:
             st.markdown(
-                '<div style="height:180px;display:flex;align-items:center;'
+                '<div style="height:240px;display:flex;align-items:center;'
                 'justify-content:center;border-radius:10px;'
                 'background:#28324c;color:#ffffff">🎬 Постер уточняется</div>',
                 unsafe_allow_html=True)
@@ -240,8 +261,16 @@ def card(movie, *, tag="", note=""):
         st.write(rating_text)
         if pd.notna(votes) and votes > 0:
             st.caption(f"👥 Оценок КП: {int(votes):,}".replace(",", " "))
-        if pd.notna(watchers) and watchers > 0:
-            st.caption(f"🔥 Ждут премьеру: {int(watchers):,}".replace(",", " "))
+        if metric_is_fresh(movie) and pd.notna(watchers) and watchers > 0:
+            asof = pd.to_datetime(movie.get("Ждут премьеру проверено"),
+                                  utc=True, errors="coerce")
+            st.caption(
+                f"🔥 Буду смотреть: {int(watchers):,}".replace(",", " ") +
+                f" · проверено {asof.strftime('%d.%m.%Y')}"
+            )
+        elif pd.notna(pd.to_numeric(movie.get("Ждут премьеру (архив)"),
+                                   errors="coerce")):
+            st.caption("🔥 Число ожидающих уточняется на Кинопоиске")
         age = available_text(movie.get("Возрастное ограничение"))
         if age:
             st.caption("Возрастное ограничение: " + age)
@@ -274,9 +303,15 @@ def card(movie, *, tag="", note=""):
             st.link_button("Карточка Кинобизнес", kb_link, use_container_width=True)
         kb_date = available_text(movie.get("Дата премьеры Кинобизнес"))
         main_date = available_text(movie.get("Дата премьеры"))
-        if kb_date and main_date and kb_date != main_date:
-            st.caption(f"⚠️ Даты источников различаются: "
-                       f"Кинопоиск/база {main_date}, Кинобизнес {kb_date}")
+        if kb_date and main_date:
+            kp_dt = pd.to_datetime(main_date, errors="coerce")
+            kb_dt = pd.to_datetime(kb_date, errors="coerce")
+            if (pd.notna(kp_dt) and pd.notna(kb_dt) and
+                (kp_dt.year, kp_dt.month) != (kb_dt.year, kb_dt.month)):
+                st.caption(
+                    f"⚠️ Уточните месяц российского проката: "
+                    f"Кинопоиск {main_date}, Кинобизнес {kb_date}"
+                )
 
 
 def card_grid(frame, *, limit=None, labels=None, notes=None):
@@ -288,7 +323,8 @@ def card_grid(frame, *, limit=None, labels=None, notes=None):
     for start in range(0, len(recs), 3):
         cols = st.columns(3, gap="medium")
         for column, movie in zip(cols, recs[start:start + 3]):
-            fid = re.sub(r"\.0$", "", available_text(movie.get("ID фильма")))
+            fid = available_text(movie.get("_movie_id")) or re.sub(
+                r"\.0$", "", available_text(movie.get("ID фильма")))
             with column:
                 card(movie, tag=(labels or {}).get(fid, ""),
                      note=(notes or {}).get(fid, ""))
@@ -298,27 +334,35 @@ upcoming = f[f["Дата"].notna()].copy()
 upcoming = upcoming[upcoming["Дата"].dt.date >= today_msk].sort_values(
     ["Дата", "Название"], na_position="last")
 ranked = leaders(upcoming)
+top_five = top_expected(upcoming, limit=5)
+top_ids = set(top_five["_movie_id"].astype(str)) if not top_five.empty else set()
 highlight_labels = {}
 for key, label in (
-    ("anticipated", "🔥 ОЖИДАЕМАЯ ПРЕМЬЕРА"),
     ("top_rating", "⭐ ВЫСОКИЙ РЕЙТИНГ"),
     ("most_votes", "👥 БОЛЬШЕ ВСЕГО ОЦЕНОК"),
 ):
     if key in ranked:
-        fid = re.sub(r"\.0$", "", available_text(ranked[key].get("ID фильма")))
+        fid = available_text(ranked[key].get("_movie_id"))
         if fid and fid not in highlight_labels:
             highlight_labels[fid] = label
+for fid in top_ids:
+    highlight_labels[fid] = "🔥 ОЖИДАЕМАЯ ПРЕМЬЕРА"
 
 st.subheader("🎞️ Ближайшие премьеры")
-st.caption("Все карточки и таблицы ниже используют одинаковые фильтры слева. "
-           "Даты, указанные первым числом без подтверждённого дня, могут обозначать только месяц.")
-card_grid(upcoming, limit=9, labels=highlight_labels)
+st.caption("Общие фильтры слева действуют для всех карточек и таблиц. "
+           "Лидеры ожиданий показаны ниже отдельно, без повторения здесь.")
+nearby = upcoming[~upcoming["_movie_id"].astype(str).isin(top_ids)]
+card_grid(nearby, limit=9, labels=highlight_labels)
 
-if "anticipated" in ranked:
-    st.subheader("🔥 Ожидаемая премьера")
-    st.caption("Фильм с наибольшим доступным показателем «Ждут премьеру» в текущей будущей выборке.")
-    highlight = ranked["anticipated"].to_frame().T
-    card_grid(highlight, labels=highlight_labels)
+st.subheader("🔥 Самые ожидаемые премьеры — топ-5")
+st.caption("Рейтинг по отметкам «Буду смотреть» на Кинопоиске. "
+           "Используются только числа, подтверждённые в течение последних 8 дней; "
+           "при ежедневном обновлении мониторинг перепроверяет лидеров.")
+if top_five.empty:
+    st.info("Достоверные свежие показатели ожиданий пока обновляются. "
+            "Старые числа скрыты, чтобы не вводить в заблуждение.")
+else:
+    card_grid(top_five, labels=highlight_labels)
 
 tab_gallery, tab_months, tab_catalog, tab_overview, tab_events, tab_logs = st.tabs([
     "🎬 Все премьеры", "🗓 Через N месяцев", "🎞 Каталог",

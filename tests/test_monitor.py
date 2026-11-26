@@ -30,6 +30,19 @@ class CinemaMonitorTests(unittest.TestCase):
         film = parse_premiere_page(html, "https://www.kinopoisk.ru/premiere/ru/2030/month/2/")[0]
         self.assertNotIn("Дата премьеры", film)
 
+    def test_planned_to_watch_count_records_verification_time(self):
+        state = {"apolloState": {"Film:8123456": {
+            "rating": {"plannedToWatch": {"count": 142965}}
+        }}}
+        fields = extract_film_extra(state, "8123456")
+        self.assertEqual(fields["Ждут премьеру"], 142965)
+        self.assertTrue(fields["Ждут премьеру проверено"].endswith("+00:00"))
+        missing = extract_film_extra(
+            {"apolloState": {"Film:8123456": {
+                "rating": {"plannedToWatch": None}}}}, "8123456")
+        self.assertNotIn("Ждут премьеру проверено", missing)
+        self.assertNotIn("Ждут премьеру", missing)
+
     def test_ssr_card_russian_release(self):
         state = {"apolloState": {
             "Film:8123456": {"title": {"russian": "Премьера"}, "productionYear": 2027,
